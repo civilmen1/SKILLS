@@ -1,0 +1,28 @@
+{
+  "slab_type": "one_way",
+  "spans": [4.5],
+  "loads": {
+    "dead": 3.5,
+    "live": 2.0
+  },
+  "seismic": {
+    "So": 0.35,
+    "soil_type": "S2",
+    "category": "C",
+    "R": 4.0,
+    "importance_factor": 1.0
+  },
+  "materials": {
+    "fc": 21,
+    "fy": 420,
+    "cover": 0.025
+  },
+  "constraints": {
+    "h_min": 0.12,
+    "h_max": 0.22,
+    "bar_diameters": [8, 10, 12],
+    "spacing": [0.10, 0.125, 0.15, 0.175, 0.20]
+  },
+  "objective": "min_steel",
+  "support": "continuous"
+}
