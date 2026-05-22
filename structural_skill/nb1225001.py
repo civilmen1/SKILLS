@@ -55,32 +55,46 @@ def As_required_flexure(Mu: float, fc: float, fy: float, b: float, d: float) -> 
     """
     Área de acero requerida para flexión en losas [cm2/m].
 
-    Mu [kN·m/m], b [m] (franja = 1m), d [m]
+    Convenio de unidades (consistente N-mm):
+        Mu  [kN·m/m]  -> multiplicar por 1e6 para obtener [N·mm/m]
+        b   [m]       -> multiplicar por 1000 para obtener [mm]
+        d   [m]       -> multiplicar por 1000 para obtener [mm]
+        fc, fy        [MPa = N/mm2]
+        As resultado  [mm2/mm] -> dividir por 10 para obtener [cm2/m]
 
-    Resuelve la ecuación cuadrática de resistencia a la flexión:
-    Mu = phi * As * fy * (d - As*fy / (2*0.85*fc*b))
+    Resuelve la ecuación cuadrática:
+        phi*As*fy*(d - As*fy/(2*0.85*fc*b)) = Mu
     """
-    Mu_Nm = Mu * 1e3       # kN·m -> N·m
-    b_mm = b * 1000        # m -> mm
+    Mu_Nmm = Mu * 1e6      # kN·m/m -> N·mm/m  (1 kN=1000 N, 1 m=1000 mm -> x1e6)
+    b_mm = b * 1000        # m -> mm  (franja 1m = 1000 mm)
     d_mm = d * 1000        # m -> mm
-    fy_N = fy              # MPa = N/mm2
-    fc_N = fc
     phi = PHI_FLEXION
 
-    # Coeficientes cuadráticos: a*As^2 + b_coef*As + c = 0
-    a_coef = fy_N / (2 * 0.85 * fc_N * b_mm)
-    b_coef = -d_mm
-    c_coef = Mu_Nm / (phi * fy_N)
-    discriminant = b_coef**2 - 4 * a_coef * c_coef
+    # Ecuación cuadrática: a_coef*As^2 - b_coef*As + c_coef = 0
+    # donde As está en [mm2] (para franja de b_mm mm)
+    a_coef = fy / (2.0 * 0.85 * fc * b_mm)
+    b_coef = d_mm
+    c_coef = Mu_Nmm / (phi * fy)
+
+    discriminant = b_coef**2 - 4.0 * a_coef * c_coef
     if discriminant < 0:
         return float('inf')  # sección insuficiente
-    As_mm2 = (-b_coef - math.sqrt(discriminant)) / (2 * a_coef)  # mm2/m
-    return As_mm2 / 100  # cm2/m
+
+    As_mm2_per_bmm = (b_coef - math.sqrt(discriminant)) / (2.0 * a_coef)  # mm2 en franja b_mm
+    # Convertir a cm2/m: As[mm2/mm] = As_mm2_per_bmm / b_mm; luego *100 cm2/m
+    As_cm2_m = (As_mm2_per_bmm / b_mm) * 100.0
+    return As_cm2_m
 
 
 def MRd_slab(As: float, fc: float, fy: float, b: float, d: float) -> float:
     """
     Momento resistente de diseño de una losa [kN·m/m].
+
+    Convenio de unidades (consistente N-mm):
+        As  [cm2/m]  -> mm2/mm multiplicando por 100 y dividiendo por 1000
+        b   [m]      -> mm
+        d   [m]      -> mm
+        Resultado    -> N·mm/mm -> dividir entre 1e3 para kN·m/m
 
     Args:
         As: Área de acero [cm2/m].
@@ -88,12 +102,15 @@ def MRd_slab(As: float, fc: float, fy: float, b: float, d: float) -> float:
     Returns:
         MRd [kN·m/m]
     """
-    As_mm2 = As * 100  # cm2/m -> mm2/m
-    b_mm = b * 1000
-    d_mm = d * 1000
-    a = As_mm2 * fy / (0.85 * fc * b_mm)  # Profundidad del bloque de compresión [mm]
-    MRd_Nmm = PHI_FLEXION * As_mm2 * fy * (d_mm - a / 2)
-    return MRd_Nmm / 1e6  # N·mm -> kN·m/m
+    b_mm = b * 1000                   # m -> mm
+    d_mm = d * 1000                   # m -> mm
+    As_mm2_per_mm = As * 100 / 1000   # cm2/m -> mm2/mm
+    As_mm2 = As_mm2_per_mm * b_mm     # mm2 total en franja b_mm
+
+    a = As_mm2 * fy / (0.85 * fc * b_mm)          # profundidad bloque compresión [mm]
+    MRd_Nmm = PHI_FLEXION * As_mm2 * fy * (d_mm - a / 2.0)   # N·mm (en franja b_mm)
+    MRd_kNm_m = MRd_Nmm / b_mm / 1e3             # N·mm/mm -> kN·m/m
+    return MRd_kNm_m
 
 
 def bar_area(diameter_mm: int) -> float:
@@ -133,17 +150,22 @@ def check_spacing(diameter_mm: int, spacing_m: float, h: float) -> dict:
     }
 
 
-def check_deflection(L: float, h: float, deflection_limit: float = 250.0) -> dict:
+def check_deflection(L: float, h: float, support: str = "continuous") -> dict:
     """
-    Verificación simplificada de flecha por esbeltez (L/h) según NB 1225001.
+    Verificación de flecha por relación L/h según NB 1225001.
 
-    Para losas continuas con fy=420 MPa: L/h <= 28 (aprox.)
-    Este chequeo es preliminar; una verificación rigurosa requiere cálculo de flecha real.
+    Límites NB 1225001:
+        Losa simplemente apoyada:  L/h <= 20
+        Losa continua:             L/h <= 28
+        Losa en voladizo:          L/h <= 10
     """
     ratio = L / h
-    # Límite básico NB 1225001 para losa simplemente apoyada
     limit_map = {"simple": 20, "continuous": 28, "cantilever": 10}
+    limit = limit_map.get(support, 28)
+    ok = ratio <= limit
     return {
         "L_h_ratio": round(ratio, 2),
+        "L_h_limit": limit,
+        "L_h_ok": ok,
         "norma": "NB 1225001 — Control de deflexiones L/h"
     }
